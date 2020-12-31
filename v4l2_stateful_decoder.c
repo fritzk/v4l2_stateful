@@ -5,6 +5,7 @@
  */
 
 // As per https://www.kernel.org/doc/html/latest/media/uapi/v4l/dev-decoder.html
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -544,19 +545,19 @@ int decode(struct compressed_file *file,
 static void print_help(const char *argv0)
 {
   printf("usage: %s [OPTIONS]\n", argv0);
-  printf("  -c, --compressed  use ubwc.\n");
   printf("  -f, --file        ivf file to decode\n");
   printf("  -w, --write       write out decompressed frames\n");
   printf("  -m, --max         max number of frames to decode\n");
   printf("  -b, --buffer      use mmap instead of dmabuf\n");
+  printf("  -o, --output_fmt  fourcc of output format\n");
 }
 
 static const struct option longopts[] = {
-  { "compressed", no_argument, NULL, 'c' },
   { "file", required_argument, NULL, 'f' },
   { "write", no_argument, NULL, 'w' },
   { "max", required_argument, NULL, 'm' },
   { "buffer", no_argument, NULL, 'b' },
+  { "output_fmt", no_argument, NULL, 'o' },
   { 0, 0, 0, 0 },
 };
 
@@ -569,12 +570,8 @@ int main(int argc, char *argv[]){
   uint32_t frames_to_decode = UINT_MAX;
   uint32_t uncompressed_fourcc = v4l2_fourcc('N', 'V', '1', '2');
   uint32_t CAPTURE_memory = V4L2_MEMORY_DMABUF;
-  while ((c = getopt_long(argc, argv, "cwbm:f:", longopts, NULL)) != -1) {
+  while ((c = getopt_long(argc, argv, "wbm:f:o:", longopts, NULL)) != -1) {
     switch (c) {
-      case 'c':
-        use_ubwc = 1;
-        uncompressed_fourcc = v4l2_fourcc('Q', '1', '2', '8');;
-        break;
       case 'f':
         file_name = strdup(optarg);
         break;
@@ -587,6 +584,19 @@ int main(int argc, char *argv[]){
         break;
       case 'b':
         CAPTURE_memory = V4L2_MEMORY_MMAP;
+        break;
+      case 'o':
+          if (strlen(optarg) == 4) {
+            uncompressed_fourcc = v4l2_fourcc(toupper(optarg[0]),
+                                              toupper(optarg[1]),
+                                              toupper(optarg[2]),
+                                              toupper(optarg[3]));
+            printf("using (%s) as the CAPTURE format\n", optarg);
+            if (uncompressed_fourcc == v4l2_fourcc('Q', '1', '2', '8')) {
+              printf("compressed format, setting modifier\n");
+              use_ubwc = 1;
+            }
+          }
         break;
       default:
         break;
