@@ -457,11 +457,11 @@ int configure_h264(int v4lfd, struct encoder_cfg *cfg) {
   ext_ctrl[0].id = V4L2_CID_MPEG_VIDEO_BITRATE;
   ext_ctrl[0].value = cfg->bitrate;
 
-  ext_ctrl[1].id = V4L2_CID_MPEG_VIDEO_H264_PROFILE;
-  ext_ctrl[1].value = cfg->h264_profile;
+  ext_ctrl[1].id = V4L2_CID_MPEG_VIDEO_GOP_SIZE;
+  ext_ctrl[1].value = cfg->gop_size;
 
-  ext_ctrl[2].id = V4L2_CID_MPEG_VIDEO_GOP_SIZE;
-  ext_ctrl[2].value = cfg->gop_size;
+  ext_ctrl[2].id = V4L2_CID_MPEG_VIDEO_H264_PROFILE;
+  ext_ctrl[2].value = cfg->h264_profile;
 
   ext_ctrl[3].id = V4L2_CID_MPEG_VIDEO_H264_LEVEL;
   ext_ctrl[3].value = cfg->h264_level;
@@ -495,13 +495,13 @@ int configure_h264(int v4lfd, struct encoder_cfg *cfg) {
     fprintf(stderr, "requested bitrate(%d) was outside of the limit, using (%d) instead.\n",
       cfg->bitrate, ext_ctrl[0].value);
 
-  if (ext_ctrl[1].value != cfg->h264_profile)
-    fprintf(stderr, "requested profile(%d) was not used, using (%d) instead.\n",
-      cfg->h264_profile, ext_ctrl[1].value);
-
-  if (ext_ctrl[2].value != cfg->gop_size)
+  if (ext_ctrl[1].value != cfg->gop_size)
     fprintf(stderr, "requested gop size(%d) was not used, using (%d) instead.\n",
-      cfg->gop_size, ext_ctrl[2].value);
+      cfg->gop_size, ext_ctrl[1].value);
+
+  if (ext_ctrl[2].value != cfg->h264_profile)
+    fprintf(stderr, "requested profile(%d) was not used, using (%d) instead.\n",
+      cfg->h264_profile, ext_ctrl[2].value);
 
   if (ext_ctrl[3].value != cfg->h264_level)
     fprintf(stderr, "requested level(%d) was not used, using (%d) instead.\n",
@@ -517,17 +517,20 @@ int configure_h264(int v4lfd, struct encoder_cfg *cfg) {
 int configure_vp8(int v4lfd, struct encoder_cfg *cfg) {
   int ret = 0;
 
-  struct v4l2_ext_control ext_ctrl[1];
+  struct v4l2_ext_control ext_ctrl[2];
   memset(&ext_ctrl, 0, sizeof(ext_ctrl));
 
   ext_ctrl[0].id = V4L2_CID_MPEG_VIDEO_BITRATE;
   ext_ctrl[0].value = cfg->bitrate;
 
+  ext_ctrl[1].id = V4L2_CID_MPEG_VIDEO_GOP_SIZE;
+  ext_ctrl[1].value = cfg->gop_size;
+
   struct v4l2_ext_controls ext_ctrls;
   memset(&ext_ctrls, 0, sizeof(ext_ctrls));
 
   ext_ctrls.ctrl_class = V4L2_CTRL_CLASS_MPEG;
-  ext_ctrls.count = 1;
+  ext_ctrls.count = 2;
   ext_ctrls.controls = ext_ctrl;
 
   ret = ioctl(v4lfd, VIDIOC_S_EXT_CTRLS, &ext_ctrls);
@@ -544,6 +547,10 @@ int configure_vp8(int v4lfd, struct encoder_cfg *cfg) {
   if (ext_ctrl[0].value != cfg->bitrate)
     fprintf(stderr, "requested bitrate(%d) was outside of the limit, using (%d) instead.\n",
       cfg->bitrate, ext_ctrl[0].value);
+
+  if (ext_ctrl[1].value != cfg->gop_size)
+    fprintf(stderr, "requested gop size(%d) was not used, using (%d) instead.\n",
+      cfg->gop_size, ext_ctrl[1].value);
 
   return ret;
 }
