@@ -23,8 +23,7 @@
 static const char* kDRMDevice = "/dev/dri/card1";
 static const char* kDecodeDevice = "/dev/video-dec0";
 static const int kInputbufferMaxSize = 4 * 1024 * 1024;
-static const int kOutputBuffers = 8;
-static const int kCaptureBuffers = 8;
+static const int kRequestBufferCount = 8;
 static const int kNumPlanesUsed = 1;
 static const uint32_t kIVFHeaderSignature = v4l2_fourcc('D', 'K', 'I', 'F');
 
@@ -215,7 +214,7 @@ int setup_OUTPUT(struct queue *OUTPUT_queue) {
   if (!ret) {
     struct v4l2_requestbuffers reqbuf;
     memset(&reqbuf, 0, sizeof(reqbuf));
-    reqbuf.count = kOutputBuffers;
+    reqbuf.count = kRequestBufferCount;
     reqbuf.type = OUTPUT_queue->type;
     reqbuf.memory = V4L2_MEMORY_MMAP;
 
@@ -224,7 +223,7 @@ int setup_OUTPUT(struct queue *OUTPUT_queue) {
       perror("VIDIOC_REQBUFS failed");
 
     printf("%d buffers requested, %d buffers for compressed data returned\n",
-      kCaptureBuffers, reqbuf.count);
+      kRequestBufferCount, reqbuf.count);
 
     ret = request_mmap_buffers(OUTPUT_queue->v4lfd, OUTPUT_queue, &reqbuf);
   }
@@ -353,7 +352,7 @@ int setup_CAPTURE(struct queue *CAPTURE_queue) {
   if (!ret) {
     struct v4l2_requestbuffers reqbuf;
     memset(&reqbuf, 0, sizeof(reqbuf));
-    reqbuf.count = kCaptureBuffers;
+    reqbuf.count = kRequestBufferCount;
     reqbuf.type = CAPTURE_queue->type;
     reqbuf.memory = V4L2_MEMORY_DMABUF;
 
@@ -362,7 +361,7 @@ int setup_CAPTURE(struct queue *CAPTURE_queue) {
       perror("VIDIOC_REQBUFS failed");
 
     printf("%d buffers requested, %d buffers for decoded data returned\n",
-      kCaptureBuffers, reqbuf.count);
+      kRequestBufferCount, reqbuf.count);
 
     const uint32_t buffer_alloc = reqbuf.count * sizeof(struct mmap_buffers);
     struct mmap_buffers *buffers =
@@ -511,7 +510,6 @@ int decode(int drm_device_fd,
 
   return ret;
 }
-
 
 static void print_help(const char *argv0)
 {
