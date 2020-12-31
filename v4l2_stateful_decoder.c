@@ -287,7 +287,7 @@ int prime_OUTPUT(struct compressed_file *file,
 
   for (uint32_t i = 0; i < OUTPUT_queue->cnt; ++i) {
     ret = submit_compressed_frame(file, OUTPUT_queue, i);
-    if (!ret)
+    if (ret)
       break;
   }
   return ret;
