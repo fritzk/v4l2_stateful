@@ -24,7 +24,6 @@ static const char* kDRMDevice = "/dev/dri/card1";
 static const char* kDecodeDevice = "/dev/video-dec0";
 static const int kInputbufferMaxSize = 4 * 1024 * 1024;
 static const int kRequestBufferCount = 8;
-static const int kNumPlanesUsed = 1;
 static const uint32_t kIVFHeaderSignature = v4l2_fourcc('D', 'K', 'I', 'F');
 
 struct mmap_buffers {
@@ -41,6 +40,7 @@ struct queue {
   uint32_t image_width;
   uint32_t image_height;
   uint32_t cnt;
+  uint32_t num_planes;
 };
 
 struct ivf_file_header {
@@ -167,7 +167,7 @@ int request_mmap_buffers(struct queue *queue,
     buffer.type = reqbuf->type;
     buffer.memory = V4L2_MEMORY_MMAP;
     buffer.index = i;
-    buffer.length = kNumPlanesUsed;
+    buffer.length = queue->num_planes;
     buffer.m.planes = planes;
     ret = ioctl(v4lfd, VIDIOC_QUERYBUF, &buffer);
     if (ret != 0) {
@@ -175,7 +175,7 @@ int request_mmap_buffers(struct queue *queue,
       break;
     }
 
-    for (uint32_t j = 0; j < kNumPlanesUsed; j++) {
+    for (uint32_t j = 0; j < queue->num_planes; j++) {
       buffers[i].length[j] = buffer.m.planes[j].length;
       buffers[i].start[j] = mmap(NULL, buffer.m.planes[j].length,
                                  PROT_READ | PROT_WRITE, MAP_SHARED,
@@ -298,7 +298,7 @@ void cleanup_queue(struct queue *queue) {
     struct mmap_buffers *buffers = queue->buffers;
 
     for (uint32_t i = 0; i < queue->cnt; i++)
-      for (uint32_t j = 0; j < kNumPlanesUsed; j++) {
+      for (uint32_t j = 0; j < queue->num_planes; j++) {
         if (buffers[i].length[j])
           munmap(buffers[i].start[j], buffers[i].length[j]);
         if (buffers[i].fd > 0)
@@ -310,21 +310,22 @@ void cleanup_queue(struct queue *queue) {
   }
 }
 
-int queue_buffer_CAPTURE(struct queue *CAPTURE_queue, uint32_t index) {
+int queue_buffer_CAPTURE(struct queue *queue, uint32_t index) {
   struct v4l2_buffer v4l2_buffer;
-  struct v4l2_plane planes[kNumPlanesUsed];
+  struct v4l2_plane planes[VIDEO_MAX_PLANES];
   memset(&v4l2_buffer, 0, sizeof v4l2_buffer);
   memset(&planes, 0, sizeof planes);
 
-  v4l2_buffer.type = CAPTURE_queue->type;
+  v4l2_buffer.type = queue->type;
   v4l2_buffer.memory = V4L2_MEMORY_DMABUF;
   v4l2_buffer.index = index;
   v4l2_buffer.m.planes = planes;
-  v4l2_buffer.length = kNumPlanesUsed;
+  v4l2_buffer.length = queue->num_planes;
 
-  v4l2_buffer.m.planes[0].m.fd = CAPTURE_queue->buffers[index].fd;
+  for (uint32_t i = 0; i < queue->num_planes; ++i)
+    v4l2_buffer.m.planes[i].m.fd = queue->buffers[index].fd;
 
-  int ret = ioctl(CAPTURE_queue->v4lfd, VIDIOC_QBUF, &v4l2_buffer);
+  int ret = ioctl(queue->v4lfd, VIDIOC_QBUF, &v4l2_buffer);
   if (ret != 0) {
     perror("VIDIOC_QBUF failed");
   }
@@ -350,6 +351,7 @@ int setup_CAPTURE(int drm_device_fd, struct queue *CAPTURE_queue, uint32_t use_u
 
     CAPTURE_queue->image_width = fmt.fmt.pix_mp.width;
     CAPTURE_queue->image_height = fmt.fmt.pix_mp.height;
+    CAPTURE_queue->num_planes = fmt.fmt.pix_mp.num_planes;
 
     printf("CAPTURE: %d x %d\n", fmt.fmt.pix_mp.width, fmt.fmt.pix_mp.height);
   }
@@ -450,7 +452,7 @@ int DQBUF(struct queue *queue, uint32_t *index) {
   struct v4l2_plane planes[VIDEO_MAX_PLANES] = { 0 };
   memset(&v4l2_buffer, 0, sizeof(v4l2_buffer));
   v4l2_buffer.type = queue->type;
-  v4l2_buffer.length = 1;
+  v4l2_buffer.length = queue->num_planes;
   v4l2_buffer.m.planes = planes;
   v4l2_buffer.m.planes[0].bytesused = 0;
   int ret = ioctl(queue->v4lfd, VIDIOC_DQBUF, &v4l2_buffer);
@@ -580,7 +582,8 @@ int main(int argc, char *argv[]){
 
   struct queue OUTPUT_queue = { .v4lfd = v4lfd,
                                 .type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
-                                .fourcc =  compressed_file.header.fourcc};
+                                .fourcc =  compressed_file.header.fourcc,
+                                .num_planes = 1};
   int ret = setup_OUTPUT(&OUTPUT_queue);
 
   if (!ret)
@@ -588,7 +591,8 @@ int main(int argc, char *argv[]){
 
   struct queue CAPTURE_queue = { .v4lfd = v4lfd,
                                  .type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE,
-                                 .fourcc =  uncompressed_fourcc};
+                                 .fourcc =  uncompressed_fourcc,
+                                 .num_planes = 1};
   if (!ret)
     ret = setup_CAPTURE(drm_device_fd, &CAPTURE_queue, use_ubwc);
 
