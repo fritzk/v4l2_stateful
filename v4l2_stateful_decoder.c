@@ -149,9 +149,9 @@ int capabilities(int v4lfd,
   return ret;
 }
 
-int request_mmap_buffers(int v4lfd,
-                         struct queue *queue,
+int request_mmap_buffers(struct queue *queue,
                          struct v4l2_requestbuffers *reqbuf) {
+  const int v4lfd = queue->v4lfd;
   const uint32_t buffer_alloc = reqbuf->count * sizeof(struct mmap_buffers);
   struct mmap_buffers *buffers =
     (struct mmap_buffers *)malloc(buffer_alloc);
@@ -225,7 +225,7 @@ int setup_OUTPUT(struct queue *OUTPUT_queue) {
     printf("%d buffers requested, %d buffers for compressed data returned\n",
       kRequestBufferCount, reqbuf.count);
 
-    ret = request_mmap_buffers(OUTPUT_queue->v4lfd, OUTPUT_queue, &reqbuf);
+    ret = request_mmap_buffers(OUTPUT_queue, &reqbuf);
   }
 
   // 3. Start streaming on the OUTPUT queue via VIDIOC_STREAMON().
@@ -310,9 +310,31 @@ void cleanup_queue(struct queue *queue) {
   }
 }
 
+int queue_buffer_CAPTURE(struct queue *CAPTURE_queue, uint32_t index) {
+  struct v4l2_buffer v4l2_buffer;
+  struct v4l2_plane planes[kNumPlanesUsed];
+  memset(&v4l2_buffer, 0, sizeof v4l2_buffer);
+  memset(&planes, 0, sizeof planes);
+
+  v4l2_buffer.type = CAPTURE_queue->type;
+  v4l2_buffer.memory = V4L2_MEMORY_DMABUF;
+  v4l2_buffer.index = index;
+  v4l2_buffer.m.planes = planes;
+  v4l2_buffer.length = kNumPlanesUsed;
+
+  v4l2_buffer.m.planes[0].m.fd = CAPTURE_queue->buffers[index].fd;
+
+  int ret = ioctl(CAPTURE_queue->v4lfd, VIDIOC_QBUF, &v4l2_buffer);
+  if (ret != 0) {
+    perror("VIDIOC_QBUF failed");
+  }
+
+  return ret;
+}
+
 // this is the output queue that will produce uncompressed frames
 // 4.5.1.6
-int setup_CAPTURE(struct queue *CAPTURE_queue) {
+int setup_CAPTURE(int drm_device_fd, struct queue *CAPTURE_queue, uint32_t use_ubwc) {
   int ret = 0;
 
   // 1. Call VIDIOC_G_FMT() on the CAPTURE queue to get format for the
@@ -369,6 +391,23 @@ int setup_CAPTURE(struct queue *CAPTURE_queue) {
     memset(buffers, 0, buffer_alloc);
     CAPTURE_queue->buffers = buffers;
     CAPTURE_queue->cnt = reqbuf.count;
+
+    for (uint32_t i = 0; i < CAPTURE_queue->cnt; ++i) {
+      const uint32_t width = CAPTURE_queue->image_width;
+      const uint32_t height = CAPTURE_queue->image_height;
+
+      CAPTURE_queue->buffers[i].fd =
+        bo_create_nv12(drm_device_fd, width, height, use_ubwc);
+      if (CAPTURE_queue->buffers[i].fd > 0) {
+        ret = queue_buffer_CAPTURE(CAPTURE_queue, i);
+        if (ret != 0)
+          break;
+      } else {
+        fprintf(stderr, "could not allocate a dmabuf %d x %d\n", width, height);
+        ret = 1;
+        break;
+      }
+    }
   }
 
   // 11. Call VIDIOC_STREAMON() on the CAPTURE queue to start decoding frames.
@@ -406,28 +445,6 @@ void write_file_to_disk(struct queue *CAPTURE_queue,
   munmap(buffer, buffer_size);
 }
 
-int queue_buffer_CAPTURE(struct queue *CAPTURE_queue, uint32_t index) {
-  struct v4l2_buffer v4l2_buffer;
-  struct v4l2_plane planes[kNumPlanesUsed];
-  memset(&v4l2_buffer, 0, sizeof v4l2_buffer);
-  memset(&planes, 0, sizeof planes);
-
-  v4l2_buffer.type = CAPTURE_queue->type;
-  v4l2_buffer.memory = V4L2_MEMORY_DMABUF;
-  v4l2_buffer.index = index;
-  v4l2_buffer.m.planes = planes;
-  v4l2_buffer.length = kNumPlanesUsed;
-
-  v4l2_buffer.m.planes[0].m.fd = CAPTURE_queue->buffers[index].fd;
-
-  int ret = ioctl(CAPTURE_queue->v4lfd, VIDIOC_QBUF, &v4l2_buffer);
-  if (ret != 0) {
-    perror("VIDIOC_QBUF failed");
-  }
-
-  return ret;
-}
-
 int DQBUF(struct queue *queue, uint32_t *index) {
   struct v4l2_buffer v4l2_buffer;
   struct v4l2_plane planes[VIDEO_MAX_PLANES] = { 0 };
@@ -446,29 +463,9 @@ int decode(int drm_device_fd,
            struct compressed_file *file,
            struct queue *CAPTURE_queue,
            struct queue *OUTPUT_queue,
-           uint32_t use_ubwc,
            uint32_t write_out,
            uint32_t frames_to_decode) {
   int ret = 0;
-
-  if (!ret) {
-    for (uint32_t i = 0; i < CAPTURE_queue->cnt; ++i) {
-      const uint32_t width = CAPTURE_queue->image_width;
-      const uint32_t height = CAPTURE_queue->image_height;
-
-      CAPTURE_queue->buffers[i].fd =
-        bo_create_nv12(drm_device_fd, width, height, use_ubwc);
-      if (CAPTURE_queue->buffers[i].fd > 0) {
-        ret = queue_buffer_CAPTURE(CAPTURE_queue, i);
-        if (ret != 0)
-          break;
-      } else {
-        fprintf(stderr, "could not allocate a dmabuf %d x %d\n", width, height);
-        ret = 1;
-        break;
-      }
-    }
-  }
 
   if (!ret) {
     uint32_t cnt = 0;
@@ -593,14 +590,14 @@ int main(int argc, char *argv[]){
                                  .type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE,
                                  .fourcc =  uncompressed_fourcc};
   if (!ret)
-    ret = setup_CAPTURE(&CAPTURE_queue);
+    ret = setup_CAPTURE(drm_device_fd, &CAPTURE_queue, use_ubwc);
 
   if (!ret)
     ret = decode(drm_device_fd,
                  &compressed_file,
                  &CAPTURE_queue,
                  &OUTPUT_queue,
-                 use_ubwc, write_out, frames_to_decode);
+                 write_out, frames_to_decode);
 
   cleanup_queue(&OUTPUT_queue);
   cleanup_queue(&CAPTURE_queue);
