@@ -41,6 +41,7 @@ struct queue {
   uint32_t image_height;
   uint32_t cnt;
   uint32_t num_planes;
+  uint32_t memory;
 };
 
 struct ivf_file_header {
@@ -165,7 +166,7 @@ int request_mmap_buffers(struct queue *queue,
     struct v4l2_plane planes[VIDEO_MAX_PLANES];
     memset(&buffer, 0, sizeof(buffer));
     buffer.type = reqbuf->type;
-    buffer.memory = V4L2_MEMORY_MMAP;
+    buffer.memory = queue->memory;
     buffer.index = i;
     buffer.length = queue->num_planes;
     buffer.m.planes = planes;
@@ -216,7 +217,7 @@ int setup_OUTPUT(struct queue *OUTPUT_queue) {
     memset(&reqbuf, 0, sizeof(reqbuf));
     reqbuf.count = kRequestBufferCount;
     reqbuf.type = OUTPUT_queue->type;
-    reqbuf.memory = V4L2_MEMORY_MMAP;
+    reqbuf.memory = OUTPUT_queue->memory;
 
     ret = ioctl(OUTPUT_queue->v4lfd, VIDIOC_REQBUFS, &reqbuf);
     if (ret != 0)
@@ -262,7 +263,7 @@ int submit_compressed_frame(struct compressed_file *file,
   memset(&v4l2_buffer, 0, sizeof(v4l2_buffer));
   v4l2_buffer.index = index;
   v4l2_buffer.type = OUTPUT_queue->type;
-  v4l2_buffer.memory = V4L2_MEMORY_MMAP;
+  v4l2_buffer.memory = OUTPUT_queue->memory;
   v4l2_buffer.length = 1;
   v4l2_buffer.timestamp.tv_sec = 0;
   v4l2_buffer.timestamp.tv_usec = ((frame_header.timestamp * den) / num) * 100;
@@ -317,13 +318,22 @@ int queue_buffer_CAPTURE(struct queue *queue, uint32_t index) {
   memset(&planes, 0, sizeof planes);
 
   v4l2_buffer.type = queue->type;
-  v4l2_buffer.memory = V4L2_MEMORY_DMABUF;
+  v4l2_buffer.memory = queue->memory;
   v4l2_buffer.index = index;
   v4l2_buffer.m.planes = planes;
   v4l2_buffer.length = queue->num_planes;
 
-  for (uint32_t i = 0; i < queue->num_planes; ++i)
-    v4l2_buffer.m.planes[i].m.fd = queue->buffers[index].fd;
+  for (uint32_t i = 0; i < queue->num_planes; ++i) {
+    if (queue->memory == V4L2_MEMORY_DMABUF) {
+      v4l2_buffer.m.planes[i].m.fd = queue->buffers[index].fd;
+    } else if (queue->memory == V4L2_MEMORY_MMAP) {
+      struct mmap_buffers *buffers = queue->buffers;
+
+      v4l2_buffer.m.planes[i].length = buffers[index].length[i];
+      v4l2_buffer.m.planes[i].bytesused = buffers[index].length[i];
+      v4l2_buffer.m.planes[i].data_offset = 0;
+    }
+  }
 
   int ret = ioctl(queue->v4lfd, VIDIOC_QBUF, &v4l2_buffer);
   if (ret != 0) {
@@ -378,7 +388,7 @@ int setup_CAPTURE(int drm_device_fd, struct queue *CAPTURE_queue, uint32_t use_u
     memset(&reqbuf, 0, sizeof(reqbuf));
     reqbuf.count = kRequestBufferCount;
     reqbuf.type = CAPTURE_queue->type;
-    reqbuf.memory = V4L2_MEMORY_DMABUF;
+    reqbuf.memory = CAPTURE_queue->memory;
 
     ret = ioctl(CAPTURE_queue->v4lfd, VIDIOC_REQBUFS, &reqbuf);
     if (ret != 0)
@@ -387,28 +397,37 @@ int setup_CAPTURE(int drm_device_fd, struct queue *CAPTURE_queue, uint32_t use_u
     printf("%d buffers requested, %d buffers for decoded data returned\n",
       kRequestBufferCount, reqbuf.count);
 
-    const uint32_t buffer_alloc = reqbuf.count * sizeof(struct mmap_buffers);
-    struct mmap_buffers *buffers =
-      (struct mmap_buffers *)malloc(buffer_alloc);
-    memset(buffers, 0, buffer_alloc);
-    CAPTURE_queue->buffers = buffers;
-    CAPTURE_queue->cnt = reqbuf.count;
+    if (CAPTURE_queue->memory == V4L2_MEMORY_DMABUF) {
+      const uint32_t buffer_alloc = reqbuf.count * sizeof(struct mmap_buffers);
+      struct mmap_buffers *buffers =
+        (struct mmap_buffers *)malloc(buffer_alloc);
+      memset(buffers, 0, buffer_alloc);
+      CAPTURE_queue->buffers = buffers;
+      CAPTURE_queue->cnt = reqbuf.count;
 
-    for (uint32_t i = 0; i < CAPTURE_queue->cnt; ++i) {
-      const uint32_t width = CAPTURE_queue->image_width;
-      const uint32_t height = CAPTURE_queue->image_height;
+      for (uint32_t i = 0; i < CAPTURE_queue->cnt; ++i) {
+        const uint32_t width = CAPTURE_queue->image_width;
+        const uint32_t height = CAPTURE_queue->image_height;
 
-      CAPTURE_queue->buffers[i].fd =
-        bo_create_nv12(drm_device_fd, width, height, use_ubwc);
-      if (CAPTURE_queue->buffers[i].fd > 0) {
-        ret = queue_buffer_CAPTURE(CAPTURE_queue, i);
-        if (ret != 0)
+        CAPTURE_queue->buffers[i].fd =
+          bo_create_nv12(drm_device_fd, width, height, use_ubwc);
+        if (CAPTURE_queue->buffers[i].fd > 0) {
+          ret = queue_buffer_CAPTURE(CAPTURE_queue, i);
+          if (ret != 0)
+            break;
+        } else {
+          fprintf(stderr, "could not allocate a dmabuf %d x %d\n", width, height);
+          ret = -1;
           break;
-      } else {
-        fprintf(stderr, "could not allocate a dmabuf %d x %d\n", width, height);
-        ret = 1;
-        break;
+        }
       }
+    } else if (CAPTURE_queue->memory == V4L2_MEMORY_MMAP) {
+      ret = request_mmap_buffers(CAPTURE_queue, &reqbuf);
+      for (uint32_t i = 0; i < reqbuf.count; i++) {
+        queue_buffer_CAPTURE(CAPTURE_queue, i);
+      }
+    } else {
+      ret = -1;
     }
   }
 
@@ -426,25 +445,38 @@ void write_file_to_disk(struct queue *CAPTURE_queue,
                         uint32_t index,
                         uint32_t cnt) {
 
-  int bo_fd = CAPTURE_queue->buffers[index].fd;
-  size_t buffer_size = lseek(bo_fd, 0, SEEK_END);
-  lseek(bo_fd, 0, SEEK_SET);
-
-  uint8_t *buffer = (uint8_t *)mmap(0, buffer_size, PROT_READ, MAP_SHARED, bo_fd, 0);
-
   char filename[256];
   sprintf(filename, "image_%dx%d_%d.yuv",
     CAPTURE_queue->image_width,
     CAPTURE_queue->image_height, cnt);
   FILE *fp = fopen(filename, "wb");
   if (fp) {
-    fwrite(buffer, buffer_size, 1, fp);
+    if (V4L2_MEMORY_DMABUF == CAPTURE_queue->memory) {
+      int bo_fd = CAPTURE_queue->buffers[index].fd;
+      size_t buffer_size = lseek(bo_fd, 0, SEEK_END);
+      lseek(bo_fd, 0, SEEK_SET);
+
+      uint8_t *buffer = (uint8_t *)mmap(0, buffer_size, PROT_READ, MAP_SHARED, bo_fd, 0);
+
+      fwrite(buffer, buffer_size, 1, fp);
+      munmap(buffer, buffer_size);
+    } else {
+      if (CAPTURE_queue->num_planes == 1) {
+        size_t buffer_size = (3 * CAPTURE_queue->image_width * CAPTURE_queue->image_height) >> 1;
+        uint8_t *buffer = CAPTURE_queue->buffers[index].start[0];
+        fwrite(buffer, buffer_size, 1, fp);
+      } else {
+        for (uint32_t i = 0; i < CAPTURE_queue->num_planes; ++i) {
+          size_t buffer_size = (CAPTURE_queue->image_width * CAPTURE_queue->image_height) >> i;
+          uint8_t *buffer = CAPTURE_queue->buffers[index].start[i];
+          fwrite(buffer, buffer_size, 1, fp);
+        }
+      }
+    }
     fclose(fp);
   } else {
     fprintf(stderr, "Unable to open file: %s\n", filename);
   }
-
-  munmap(buffer, buffer_size);
 }
 
 int DQBUF(struct queue *queue, uint32_t *index) {
@@ -461,8 +493,7 @@ int DQBUF(struct queue *queue, uint32_t *index) {
   return ret;
 }
 
-int decode(int drm_device_fd,
-           struct compressed_file *file,
+int decode(struct compressed_file *file,
            struct queue *CAPTURE_queue,
            struct queue *OUTPUT_queue,
            uint32_t write_out,
@@ -517,6 +548,7 @@ static void print_help(const char *argv0)
   printf("  -f, --file        ivf file to decode\n");
   printf("  -w, --write       write out decompressed frames\n");
   printf("  -m, --max         max number of frames to decode\n");
+  printf("  -b, --buffer      use mmap instead of dmabuf\n");
 }
 
 static const struct option longopts[] = {
@@ -524,6 +556,7 @@ static const struct option longopts[] = {
   { "file", required_argument, NULL, 'f' },
   { "write", no_argument, NULL, 'w' },
   { "max", required_argument, NULL, 'm' },
+  { "buffer", no_argument, NULL, 'b' },
   { 0, 0, 0, 0 },
 };
 
@@ -534,8 +567,9 @@ int main(int argc, char *argv[]){
   uint32_t use_ubwc = 0;
   uint32_t write_out = 0;
   uint32_t frames_to_decode = UINT_MAX;
-  uint32_t uncompressed_fourcc = v4l2_fourcc('N', 'V', '1', '2');;
-  while ((c = getopt_long(argc, argv, "cwm:f:", longopts, NULL)) != -1) {
+  uint32_t uncompressed_fourcc = v4l2_fourcc('N', 'V', '1', '2');
+  uint32_t CAPTURE_memory = V4L2_MEMORY_DMABUF;
+  while ((c = getopt_long(argc, argv, "cwbm:f:", longopts, NULL)) != -1) {
     switch (c) {
       case 'c':
         use_ubwc = 1;
@@ -550,6 +584,9 @@ int main(int argc, char *argv[]){
         break;
       case 'w':
         write_out = 1;
+        break;
+      case 'b':
+        CAPTURE_memory = V4L2_MEMORY_MMAP;
         break;
       default:
         break;
@@ -583,7 +620,8 @@ int main(int argc, char *argv[]){
   struct queue OUTPUT_queue = { .v4lfd = v4lfd,
                                 .type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
                                 .fourcc =  compressed_file.header.fourcc,
-                                .num_planes = 1};
+                                .num_planes = 1,
+                                .memory = V4L2_MEMORY_MMAP};
   int ret = setup_OUTPUT(&OUTPUT_queue);
 
   if (!ret)
@@ -592,13 +630,13 @@ int main(int argc, char *argv[]){
   struct queue CAPTURE_queue = { .v4lfd = v4lfd,
                                  .type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE,
                                  .fourcc =  uncompressed_fourcc,
-                                 .num_planes = 1};
+                                 .num_planes = 1,
+                                 .memory = CAPTURE_memory};
   if (!ret)
     ret = setup_CAPTURE(drm_device_fd, &CAPTURE_queue, use_ubwc);
 
   if (!ret)
-    ret = decode(drm_device_fd,
-                 &compressed_file,
+    ret = decode(&compressed_file,
                  &CAPTURE_queue,
                  &OUTPUT_queue,
                  write_out, frames_to_decode);
@@ -607,6 +645,7 @@ int main(int argc, char *argv[]){
   cleanup_queue(&CAPTURE_queue);
   close(v4lfd);
   fclose(compressed_file.fp);
+  close(drm_device_fd);
   free(file_name);
 
   return 0;
