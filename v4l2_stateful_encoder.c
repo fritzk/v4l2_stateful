@@ -452,35 +452,22 @@ int Initialization(struct queue *OUTPUT_queue, struct queue *CAPTURE_queue, uint
 
 int configure_h264(int v4lfd, struct encoder_cfg *cfg) {
   int ret = 0;
-  const int kH264CtrlCnt = 8;
+  const int kH264CtrlCnt = 4;
 
   struct v4l2_ext_control ext_ctrl[kH264CtrlCnt];
   memset(&ext_ctrl, 0, sizeof(ext_ctrl));
 
-  ext_ctrl[0].id = V4L2_CID_MPEG_VIDEO_BITRATE;
-  ext_ctrl[0].value = cfg->bitrate;
+  ext_ctrl[0].id = V4L2_CID_MPEG_VIDEO_H264_PROFILE;
+  ext_ctrl[0].value = cfg->h264_profile;
 
-  ext_ctrl[1].id = V4L2_CID_MPEG_VIDEO_GOP_SIZE;
-  ext_ctrl[1].value = cfg->gop_size;
+  ext_ctrl[1].id = V4L2_CID_MPEG_VIDEO_H264_LEVEL;
+  ext_ctrl[1].value = cfg->h264_level;
 
-  ext_ctrl[2].id = V4L2_CID_MPEG_VIDEO_H264_PROFILE;
-  ext_ctrl[2].value = cfg->h264_profile;
+  ext_ctrl[2].id = V4L2_CID_MPEG_VIDEO_H264_ENTROPY_MODE;
+  ext_ctrl[2].value = cfg->h264_entropy_mode;
 
-  ext_ctrl[3].id = V4L2_CID_MPEG_VIDEO_H264_LEVEL;
-  ext_ctrl[3].value = cfg->h264_level;
-
-  ext_ctrl[4].id = V4L2_CID_MPEG_VIDEO_H264_ENTROPY_MODE;
-  ext_ctrl[4].value = cfg->h264_entropy_mode;
-
-  ext_ctrl[5].id = V4L2_CID_MPEG_VIDEO_HEADER_MODE;
-  ext_ctrl[5].value = cfg->header_mode;
-
-  ext_ctrl[6].id = V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE;
-  ext_ctrl[6].value = 1;
-
-  ext_ctrl[7].id = V4L2_CID_MPEG_VIDEO_BITRATE_MODE;
-  ext_ctrl[7].value = cfg->bitrate_mode;
-
+  ext_ctrl[3].id = V4L2_CID_MPEG_VIDEO_HEADER_MODE;
+  ext_ctrl[3].value = cfg->header_mode;
 
   struct v4l2_ext_controls ext_ctrls;
   memset(&ext_ctrls, 0, sizeof(ext_ctrls));
@@ -501,46 +488,30 @@ int configure_h264(int v4lfd, struct encoder_cfg *cfg) {
   if (ret != 0)
     perror("VIDIOC_G_EXT_CTRLS failed");
 
-  if (ext_ctrl[0].value != cfg->bitrate)
-    fprintf(stderr, "requested bitrate(%d) was outside of the limit, using (%d) instead.\n",
-      cfg->bitrate, ext_ctrl[0].value);
-
-  if (ext_ctrl[1].value != cfg->gop_size)
-    fprintf(stderr, "requested gop size(%d) was not used, using (%d) instead.\n",
-      cfg->gop_size, ext_ctrl[1].value);
-
-  if (ext_ctrl[2].value != cfg->h264_profile)
+  if (ext_ctrl[0].value != cfg->h264_profile)
     fprintf(stderr, "requested profile(%d) was not used, using (%d) instead.\n",
-      cfg->h264_profile, ext_ctrl[2].value);
+      cfg->h264_profile, ext_ctrl[0].value);
 
-  if (ext_ctrl[3].value != cfg->h264_level)
+  if (ext_ctrl[1].value != cfg->h264_level)
     fprintf(stderr, "requested level(%d) was not used, using (%d) instead.\n",
-      cfg->h264_level, ext_ctrl[3].value);
+      cfg->h264_level, ext_ctrl[1].value);
 
-  if (ext_ctrl[4].value != cfg->h264_entropy_mode)
+  if (ext_ctrl[2].value != cfg->h264_entropy_mode)
     fprintf(stderr, "requested entropy mode(%d) was not used, using (%d) instead.\n",
-      cfg->h264_entropy_mode, ext_ctrl[4].value);
+      cfg->h264_entropy_mode, ext_ctrl[2].value);
 
-  if (ext_ctrl[5].value != cfg->header_mode)
+  if (ext_ctrl[3].value != cfg->header_mode)
     fprintf(stderr, "requested entropy mode(%d) was not used, using (%d) instead.\n",
-      cfg->header_mode, ext_ctrl[5].value);
-
-  if (ext_ctrl[6].value != 1)
-    fprintf(stderr, "requested frame rate control (%d) was not used, using (%d) instead.\n",
-      1, ext_ctrl[6].value);
-
-  if (ext_ctrl[7].value != cfg->bitrate_mode)
-    fprintf(stderr, "requested bitrate mode(%d) was not used, using (%d) instead.\n",
-      cfg->bitrate_mode, ext_ctrl[7].value);
+      cfg->header_mode, ext_ctrl[3].value);
 
   return ret;
 }
 
-int configure_vp8(int v4lfd, struct encoder_cfg *cfg) {
+int configure_common(int v4lfd, struct encoder_cfg *cfg) {
   int ret = 0;
-  const int kVP8CtrlCnt = 4;
+  const int kCommonCtrlCnt = 4;
 
-  struct v4l2_ext_control ext_ctrl[kVP8CtrlCnt];
+  struct v4l2_ext_control ext_ctrl[kCommonCtrlCnt];
   memset(&ext_ctrl, 0, sizeof(ext_ctrl));
 
   ext_ctrl[0].id = V4L2_CID_MPEG_VIDEO_BITRATE;
@@ -559,7 +530,7 @@ int configure_vp8(int v4lfd, struct encoder_cfg *cfg) {
   memset(&ext_ctrls, 0, sizeof(ext_ctrls));
 
   ext_ctrls.ctrl_class = V4L2_CTRL_CLASS_MPEG;
-  ext_ctrls.count = kVP8CtrlCnt;
+  ext_ctrls.count = kCommonCtrlCnt;
   ext_ctrls.controls = ext_ctrl;
 
   ret = ioctl(v4lfd, VIDIOC_S_EXT_CTRLS, &ext_ctrls);
@@ -567,7 +538,7 @@ int configure_vp8(int v4lfd, struct encoder_cfg *cfg) {
   if (ret != 0)
     perror("VIDIOC_S_EXT_CTRLS failed");
 
-  for (uint32_t i = 0; i < kVP8CtrlCnt; ++i)
+  for (uint32_t i = 0; i < kCommonCtrlCnt; ++i)
     ext_ctrl[i].value = 0;
 
   ret = ioctl(v4lfd, VIDIOC_G_EXT_CTRLS, &ext_ctrls);
@@ -879,9 +850,9 @@ int main(int argc, char *argv[]){
   // not all configurations are supported, so we don't need to track
   // the return value
   if (!ret) {
-    if (v4l2_fourcc('V', 'P', '8', '0') == CAPTURE_format)
-      configure_vp8(v4lfd, &cfg);
-    else
+    configure_common(v4lfd, &cfg);
+
+    if (v4l2_fourcc('H', '2', '6', '4') == CAPTURE_format)
       configure_h264(v4lfd, &cfg);
   }
 
