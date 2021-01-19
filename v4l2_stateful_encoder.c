@@ -509,7 +509,7 @@ int configure_h264(int v4lfd, struct encoder_cfg *cfg) {
 
 int configure_common(int v4lfd, struct encoder_cfg *cfg) {
   int ret = 0;
-  const int kCommonCtrlCnt = 4;
+  const int kCommonCtrlCnt = 5;
 
   struct v4l2_ext_control ext_ctrl[kCommonCtrlCnt];
   memset(&ext_ctrl, 0, sizeof(ext_ctrl));
@@ -517,14 +517,17 @@ int configure_common(int v4lfd, struct encoder_cfg *cfg) {
   ext_ctrl[0].id = V4L2_CID_MPEG_VIDEO_BITRATE;
   ext_ctrl[0].value = cfg->bitrate;
 
-  ext_ctrl[1].id = V4L2_CID_MPEG_VIDEO_GOP_SIZE;
-  ext_ctrl[1].value = cfg->gop_size;
+  ext_ctrl[1].id = V4L2_CID_MPEG_VIDEO_BITRATE_PEAK;
+  ext_ctrl[1].value = cfg->bitrate * 2;
 
-  ext_ctrl[2].id = V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE;
-  ext_ctrl[2].value = 1;
+  ext_ctrl[2].id = V4L2_CID_MPEG_VIDEO_GOP_SIZE;
+  ext_ctrl[2].value = cfg->gop_size;
 
-  ext_ctrl[3].id = V4L2_CID_MPEG_VIDEO_BITRATE_MODE;
-  ext_ctrl[3].value = cfg->bitrate_mode;
+  ext_ctrl[3].id = V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE;
+  ext_ctrl[3].value = 1;
+
+  ext_ctrl[4].id = V4L2_CID_MPEG_VIDEO_BITRATE_MODE;
+  ext_ctrl[4].value = cfg->bitrate_mode;
 
   struct v4l2_ext_controls ext_ctrls;
   memset(&ext_ctrls, 0, sizeof(ext_ctrls));
@@ -549,17 +552,21 @@ int configure_common(int v4lfd, struct encoder_cfg *cfg) {
     fprintf(stderr, "requested bitrate(%d) was outside of the limit, using (%d) instead.\n",
       cfg->bitrate, ext_ctrl[0].value);
 
-  if (ext_ctrl[1].value != cfg->gop_size)
+  if (ext_ctrl[1].value != cfg->bitrate * 2)
+    fprintf(stderr, "requested bitrate peak(%d) was outside of the limit, using (%d) instead.\n",
+      cfg->bitrate * 2, ext_ctrl[1].value);
+
+  if (ext_ctrl[2].value != cfg->gop_size)
     fprintf(stderr, "requested gop size(%d) was not used, using (%d) instead.\n",
-      cfg->gop_size, ext_ctrl[1].value);
+      cfg->gop_size, ext_ctrl[2].value);
 
-  if (ext_ctrl[2].value != 1)
+  if (ext_ctrl[3].value != 1)
     fprintf(stderr, "requested frame rate control (%d) was not used, using (%d) instead.\n",
-      1, ext_ctrl[2].value);
+      1, ext_ctrl[3].value);
 
-  if (ext_ctrl[3].value != cfg->bitrate_mode)
+  if (ext_ctrl[4].value != cfg->bitrate_mode)
     fprintf(stderr, "requested bitrate mode(%d) was not used, using (%d) instead.\n",
-      cfg->bitrate_mode, ext_ctrl[3].value);
+      cfg->bitrate_mode, ext_ctrl[4].value);
 
   return ret;
 }
