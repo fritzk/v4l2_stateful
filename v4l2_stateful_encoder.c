@@ -42,6 +42,7 @@ struct queue {
   uint32_t cnt;
   uint32_t frame_cnt;
   uint32_t num_planes;
+  uint32_t framerate;
 };
 
 struct encoder_cfg {
@@ -219,6 +220,11 @@ int submit_raw_frame(FILE *fp, struct queue *queue, uint32_t index) {
     return -1;
   }
 
+  // compute frame timestamp
+  const float usec_per_frame = (1.0 / queue->framerate) * 1000000;
+  const uint64_t usec_time_stamp = usec_per_frame * queue->frame_cnt;
+  const uint64_t tv_sec = usec_time_stamp / 1000000;
+
   struct v4l2_buffer v4l2_buffer;
   struct v4l2_plane planes[VIDEO_MAX_PLANES];
   memset(&v4l2_buffer, 0, sizeof(v4l2_buffer));
@@ -227,8 +233,9 @@ int submit_raw_frame(FILE *fp, struct queue *queue, uint32_t index) {
   v4l2_buffer.type = queue->type;
   v4l2_buffer.memory = V4L2_MEMORY_MMAP;
   v4l2_buffer.length = queue->num_planes;
-  v4l2_buffer.timestamp.tv_sec = 0;
-  v4l2_buffer.timestamp.tv_usec = queue->frame_cnt;
+  v4l2_buffer.timestamp.tv_sec = tv_sec;
+  v4l2_buffer.timestamp.tv_usec = usec_time_stamp - tv_sec;
+  v4l2_buffer.sequence = queue->frame_cnt;
   v4l2_buffer.m.planes = planes;
   for (uint32_t i = 0; i < queue->num_planes; ++i) {
     v4l2_buffer.m.planes[i].length = buffers[index].length[i];
@@ -328,7 +335,7 @@ int queue_CAPTURE_buffer(struct queue *queue, uint32_t index) {
 }
 
 // 4.5.2.5. Initialization
-int Initialization(struct queue *OUTPUT_queue, struct queue *CAPTURE_queue, uint32_t framerate) {
+int Initialization(struct queue *OUTPUT_queue, struct queue *CAPTURE_queue) {
   int ret = 0;
 
   // 1. Set the coded format on the CAPTURE queue via VIDIOC_S_FMT().
@@ -380,7 +387,7 @@ int Initialization(struct queue *OUTPUT_queue, struct queue *CAPTURE_queue, uint
     // Note that we are provided "frames per second" but V4L2 expects "time per
     // frame"; hence we provide the reciprocal of the framerate here.
     parms.parm.output.timeperframe.numerator = 1;
-    parms.parm.output.timeperframe.denominator = framerate;
+    parms.parm.output.timeperframe.denominator = OUTPUT_queue->framerate;
 
     ret = ioctl(OUTPUT_queue->v4lfd, VIDIOC_S_PARM, &parms);
     if (ret != 0)
@@ -843,16 +850,18 @@ int main(int argc, char *argv[]){
                                 .raw_width = width,
                                 .raw_height = height,
                                 .frame_cnt = 0,
-                                .num_planes = 1};
+                                .num_planes = 1,
+                                .framerate = framerate,};
 
   struct queue CAPTURE_queue = { .v4lfd = v4lfd,
                                  .type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE,
                                  .fourcc =  CAPTURE_format,
                                  .raw_width = width,
                                  .raw_height = height,
-                                 .num_planes = 1};
+                                 .num_planes = 1,
+                                 .framerate = framerate,};
 
-  int ret = Initialization(&OUTPUT_queue, &CAPTURE_queue, framerate);
+  int ret = Initialization(&OUTPUT_queue, &CAPTURE_queue);
 
   // not all configurations are supported, so we don't need to track
   // the return value
